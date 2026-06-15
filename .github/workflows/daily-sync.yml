@@ -1,9 +1,20 @@
-name: Daily Shopify Feishu Sync
+name: Shopify Feishu Manual Sync
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 22 * * *"
+    inputs:
+      target_table_url:
+        description: "飞书出单表链接"
+        required: true
+        type: string
+      start_date:
+        description: "开始日期，例如 2026-06-01"
+        required: true
+        type: string
+      end_date:
+        description: "结束日期，例如 2026-06-15"
+        required: true
+        type: string
 
 jobs:
   sync:
@@ -31,3 +42,6 @@ jobs:
           BITABLE_APP_TOKEN: ${{ secrets.BITABLE_APP_TOKEN }}
           MAIN_TABLE_ID: ${{ secrets.MAIN_TABLE_ID }}
           SKU_TABLE_ID: ${{ secrets.SKU_TABLE_ID }}
+          TARGET_TABLE_URL: ${{ inputs.target_table_url }}
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
