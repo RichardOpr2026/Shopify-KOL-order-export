@@ -1,24 +1,18 @@
 import requests
 import os
 
-SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
-SHOPIFY_TOKEN = os.getenv("SHOPIFY_TOKEN")
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET")
 
-url = f"https://{SHOPIFY_STORE}/admin/api/2025-01/orders.json"
+url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 
-headers = {
-    "X-Shopify-Access-Token": SHOPIFY_TOKEN
-}
-
-response = requests.get(
+response = requests.post(
     url,
-    headers=headers,
-    params={
-        "status": "any",
-        "limit": 5
+    json={
+        "app_id": FEISHU_APP_ID,
+        "app_secret": FEISHU_APP_SECRET
     }
 )
 
-print("Store:", SHOPIFY_STORE)
 print("Status:", response.status_code)
 print(response.text[:1000])
