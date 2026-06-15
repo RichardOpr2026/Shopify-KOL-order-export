@@ -1,43 +1,50 @@
+import os
+import re
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from urllib.parse import urlparse, parse_qs
 from config import *
 
+TARGET_TABLE_URL = os.getenv("TARGET_TABLE_URL")
+START_DATE = os.getenv("START_DATE")
+END_DATE = os.getenv("END_DATE")
 
-# =====================
-# 基础请求
-# =====================
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
 
 def request_json(method, url, headers=None, params=None, json=None):
-    res = requests.request(
-        method,
-        url,
-        headers=headers,
-        params=params,
-        json=json,
-        timeout=30
-    )
-
-    try:
-        data = res.json()
-    except Exception:
-        data = {}
-
+    res = requests.request(method, url, headers=headers, params=params, json=json, timeout=30)
     if res.status_code >= 400:
         raise Exception(f"HTTP {res.status_code}: {res.text[:1000]}")
+    return res.json()
 
-    return data
+
+def parse_target_table_url(url):
+    app_match = re.search(r"/base/([^/?]+)", url)
+    if not app_match:
+        raise Exception("无法从飞书链接中解析 base app_token")
+
+    app_token = app_match.group(1)
+    query = parse_qs(urlparse(url).query)
+    table_id = query.get("table", [None])[0]
+
+    if not table_id:
+        raise Exception("无法从飞书链接中解析 table_id")
+
+    return app_token, table_id
 
 
-# =====================
-# 飞书
-# =====================
+def parse_date_range(start_date, end_date):
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=BEIJING_TZ)
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=BEIJING_TZ) + timedelta(days=1)
+    return start_dt.isoformat(), end_dt.isoformat()
+
 
 def get_feishu_token():
-    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-
     data = request_json(
         "POST",
-        url,
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
         json={
             "app_id": FEISHU_APP_ID,
             "app_secret": FEISHU_APP_SECRET
@@ -57,26 +64,18 @@ def feishu_headers(token):
     }
 
 
-def get_all_records(token, table_id):
+def get_all_records(token, app_token, table_id):
     all_items = []
     page_token = None
 
     while True:
-        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{table_id}/records"
+        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
 
-        params = {
-            "page_size": 500
-        }
-
+        params = {"page_size": 500}
         if page_token:
             params["page_token"] = page_token
 
-        data = request_json(
-            "GET",
-            url,
-            headers=feishu_headers(token),
-            params=params
-        )
+        data = request_json("GET", url, headers=feishu_headers(token), params=params)
 
         if data.get("code") != 0:
             raise Exception(f"读取飞书表失败: {data}")
@@ -92,44 +91,14 @@ def get_all_records(token, table_id):
     return all_items
 
 
-def get_all_tables(token):
-    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables"
-
-    data = request_json(
-        "GET",
-        url,
-        headers=feishu_headers(token)
-    )
-
-    if data.get("code") != 0:
-        raise Exception(f"读取飞书表列表失败: {data}")
-
-    return data.get("data", {}).get("items", [])
-
-
-def get_current_month_table_id(token):
-    month_name = f"{datetime.now().month}月出单"
-
-    tables = get_all_tables(token)
-
-    for table in tables:
-        if table.get("name") == month_name:
-            print(f"找到当月出单表: {month_name}")
-            return table["table_id"]
-
-    raise Exception(f"没有找到当月出单表: {month_name}。请先在飞书创建该表。")
-
-
-def create_record(token, table_id, fields):
-    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{table_id}/records"
+def create_record(token, app_token, table_id, fields):
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records"
 
     data = request_json(
         "POST",
         url,
         headers=feishu_headers(token),
-        json={
-            "fields": fields
-        }
+        json={"fields": fields}
     )
 
     if data.get("code") != 0:
@@ -138,15 +107,7 @@ def create_record(token, table_id, fields):
     return data
 
 
-# =====================
-# Shopify
-# =====================
-
-def get_shopify_orders_last_48h():
-    since = (
-        datetime.now(timezone.utc) - timedelta(hours=48)
-    ).isoformat()
-
+def get_shopify_orders(start_iso, end_iso):
     url = f"https://{SHOPIFY_STORE}/admin/api/2025-01/orders.json"
 
     headers = {
@@ -159,33 +120,25 @@ def get_shopify_orders_last_48h():
         headers=headers,
         params={
             "status": "any",
-            "created_at_min": since,
-            "limit": 250
+            "created_at_min": start_iso,
+            "created_at_max": end_iso,
+            "limit": 250,
+            "order": "created_at asc"
         }
     )
 
     return data.get("orders", [])
 
 
-# =====================
-# 数据构建
-# =====================
-
 def build_kol_code_map(records):
     result = {}
 
     for record in records:
         fields = record.get("fields", {})
-
         code = fields.get("折扣码")
 
-        if not code:
-            continue
-
-        code = str(code).strip()
-
         if code:
-            result[code] = fields
+            result[str(code).strip()] = fields
 
     print(f"KOL折扣码数量: {len(result)}")
     return result
@@ -196,16 +149,13 @@ def build_sku_map(records):
 
     for record in records:
         fields = record.get("fields", {})
-
         sku = fields.get("SKU")
 
-        if not sku:
-            continue
-
-        result[str(sku).strip()] = {
-            "product": fields.get("产品"),
-            "category": fields.get("大类")
-        }
+        if sku:
+            result[str(sku).strip()] = {
+                "product": fields.get("产品"),
+                "category": fields.get("大类")
+            }
 
     print(f"SKU映射数量: {len(result)}")
     return result
@@ -221,23 +171,21 @@ def build_existing_order_names(records):
         if name:
             result.add(str(name).strip())
 
-    print(f"当月已存在订单数量: {len(result)}")
+    print(f"目标表已存在订单数量: {len(result)}")
     return result
 
 
-def get_order_discount_code(order):
+def get_discount_code(order):
     discounts = order.get("discount_codes", [])
 
     if not discounts:
         return None
 
-    first = discounts[0]
-
-    return first.get("code")
+    return discounts[0].get("code")
 
 
-def get_valid_line_items(order):
-    valid_items = []
+def get_valid_items(order):
+    items = []
 
     for item in order.get("line_items", []):
         sku = item.get("sku")
@@ -251,31 +199,25 @@ def get_valid_line_items(order):
         if sku in INSURANCE_SKUS:
             continue
 
-        valid_items.append({
+        items.append({
             "sku": sku,
             "title": title
         })
 
-    return valid_items
+    return items
 
 
-def build_remark(valid_items, sku_map):
+def build_remark(items, sku_map):
     remarks = []
 
-    for item in valid_items:
+    for item in items:
         sku = item["sku"]
         title = item["title"]
 
         sku_info = sku_map.get(sku)
 
-        if sku_info:
-            category = sku_info.get("category")
-            product = sku_info.get("product")
-
-            if category in ["高盖", "卷帘门"] and product:
-                remarks.append(str(product))
-            else:
-                remarks.append(str(title))
+        if sku_info and sku_info.get("category") in ["高盖", "卷帘门"] and sku_info.get("product"):
+            remarks.append(str(sku_info["product"]))
         else:
             remarks.append(str(title))
 
@@ -288,49 +230,46 @@ def get_billing_province(order):
 
 
 def format_date(created_at):
-    if not created_at:
-        return ""
+    return created_at[:10] if created_at else ""
 
-    return created_at[:10]
-
-
-# =====================
-# 主流程
-# =====================
 
 def main():
     print("开始同步 Shopify KOL 订单")
 
+    target_app_token, target_table_id = parse_target_table_url(TARGET_TABLE_URL)
+    start_iso, end_iso = parse_date_range(START_DATE, END_DATE)
+
+    print(f"目标表: {target_table_id}")
+    print(f"拉取时间: {start_iso} 到 {end_iso}")
+
     token = get_feishu_token()
 
-    target_table_id = get_current_month_table_id(token)
-
-    kol_records = get_all_records(token, MAIN_TABLE_ID)
-    sku_records = get_all_records(token, SKU_TABLE_ID)
-    target_records = get_all_records(token, target_table_id)
+    kol_records = get_all_records(token, BITABLE_APP_TOKEN, MAIN_TABLE_ID)
+    sku_records = get_all_records(token, BITABLE_APP_TOKEN, SKU_TABLE_ID)
+    target_records = get_all_records(token, target_app_token, target_table_id)
 
     kol_code_map = build_kol_code_map(kol_records)
     sku_map = build_sku_map(sku_records)
-    existing_order_names = build_existing_order_names(target_records)
+    existing_orders = build_existing_order_names(target_records)
 
-    orders = get_shopify_orders_last_48h()
+    orders = get_shopify_orders(start_iso, end_iso)
 
-    print(f"Shopify近48小时订单数量: {len(orders)}")
+    print(f"Shopify订单数量: {len(orders)}")
 
-    created_count = 0
+    created = 0
     skipped_no_code = 0
     skipped_code_not_found = 0
     skipped_duplicate = 0
-    skipped_no_valid_sku = 0
+    skipped_no_sku = 0
 
     for order in orders:
         order_name = order.get("name")
 
-        if order_name in existing_order_names:
+        if order_name in existing_orders:
             skipped_duplicate += 1
             continue
 
-        code = get_order_discount_code(order)
+        code = get_discount_code(order)
 
         if not code:
             skipped_no_code += 1
@@ -342,14 +281,14 @@ def main():
             skipped_code_not_found += 1
             continue
 
-        valid_items = get_valid_line_items(order)
+        items = get_valid_items(order)
 
-        if not valid_items:
-            skipped_no_valid_sku += 1
+        if not items:
+            skipped_no_sku += 1
             continue
 
-        sku_list = [item["sku"] for item in valid_items]
-        remark = build_remark(valid_items, sku_map)
+        sku_list = [item["sku"] for item in items]
+        remark = build_remark(items, sku_map)
 
         fields = {
             "Name": order_name,
@@ -362,19 +301,19 @@ def main():
             "备注": remark
         }
 
-        create_record(token, target_table_id, fields)
+        create_record(token, target_app_token, target_table_id, fields)
 
-        existing_order_names.add(order_name)
-        created_count += 1
+        existing_orders.add(order_name)
+        created += 1
 
         print(f"写入成功: {order_name} | {code} | {','.join(sku_list)}")
 
     print("同步完成")
-    print(f"新增: {created_count}")
+    print(f"新增: {created}")
     print(f"跳过-无折扣码: {skipped_no_code}")
     print(f"跳过-折扣码不在KOL表: {skipped_code_not_found}")
     print(f"跳过-重复订单: {skipped_duplicate}")
-    print(f"跳过-无有效SKU: {skipped_no_valid_sku}")
+    print(f"跳过-无有效SKU: {skipped_no_sku}")
 
 
 if __name__ == "__main__":
