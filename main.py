@@ -1,8 +1,3 @@
-print("BITABLE_APP_TOKEN =", BITABLE_APP_TOKEN)
-print("MAIN_TABLE_ID =", MAIN_TABLE_ID)
-print("SKU_TABLE_ID =", SKU_TABLE_ID)
-print("TARGET_URL =", TARGET_TABLE_URL)
-
 import os
 import re
 import requests
