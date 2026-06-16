@@ -247,7 +247,6 @@ def main():
     kol_records = get_all_records(token, BITABLE_APP_TOKEN, MAIN_TABLE_ID)
     print("BITABLE_APP_TOKEN =", BITABLE_APP_TOKEN)
     print("SKU_TABLE_ID =", SKU_TABLE_ID)
-    print("TARGET_TABLE_ID =", TARGET_TABLE_ID)
     sku_records = get_all_records(token, BITABLE_APP_TOKEN, SKU_TABLE_ID)
     target_records = get_all_records(token, target_app_token, target_table_id)
 
