@@ -1,3 +1,7 @@
+print("BITABLE_APP_TOKEN =", BITABLE_APP_TOKEN)
+print("SKU_TABLE_ID =", SKU_TABLE_ID)
+print("TARGET_TABLE_ID =", TARGET_TABLE_ID)
+
 import os
 import re
 import requests
