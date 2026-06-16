@@ -21,6 +21,9 @@ def request_json(method, url, headers=None, params=None, json=None):
 
 
 def parse_target_table_url(url):
+    if not url:
+        raise Exception("Missing TARGET_TABLE_URL")
+
     app_match = re.search(r"/base/([^/?]+)", url)
     if not app_match:
         raise Exception("无法从飞书链接中解析 base app_token")
@@ -239,16 +242,23 @@ def main():
     target_app_token, target_table_id = parse_target_table_url(TARGET_TABLE_URL)
     start_iso, end_iso = parse_date_range(START_DATE, END_DATE)
 
-    print(f"目标表: {target_table_id}")
+    print("TARGET_TABLE_URL =", TARGET_TABLE_URL)
+    print("SOURCE_APP_TOKEN =", BITABLE_APP_TOKEN)
+    print("TARGET_APP_TOKEN =", target_app_token)
+    print("TARGET_TABLE_ID =", target_table_id)
     print(f"拉取时间: {start_iso} 到 {end_iso}")
 
     token = get_feishu_token()
 
     kol_records = get_all_records(token, BITABLE_APP_TOKEN, MAIN_TABLE_ID)
+
     print("BITABLE_APP_TOKEN =", BITABLE_APP_TOKEN)
+    print("MAIN_TABLE_ID =", MAIN_TABLE_ID)
     print("SKU_TABLE_ID =", SKU_TABLE_ID)
+
     sku_records = get_all_records(token, BITABLE_APP_TOKEN, SKU_TABLE_ID)
-    target_records = []
+
+    target_records = get_all_records(token, target_app_token, target_table_id)
 
     kol_code_map = build_kol_code_map(kol_records)
     sku_map = build_sku_map(sku_records)
